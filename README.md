@@ -180,6 +180,18 @@ Platforms → Scraping → CSV Files → Feature Engineering → Scoring → LLM
 - Streamlit
 - PostgreSQL
 
+## Setup
+
+Create a virtual environment with Python 3.12+ and install the app dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+The previous `requirements.txt` was a full environment export that included older TensorFlow/JAX pins incompatible with Python 3.12. The current dependency list is trimmed to the packages actually used by `main.py`.
+
 ---
 
 ## 👨‍💻 Author

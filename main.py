@@ -1048,74 +1048,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
   # ╔══════════════════════════════════════════════════════════════════════════════╗
   # ║  CELL 4 — RESUME PARSER (extract links, email, raw text)                   ║
   # ╚══════════════════════════════════════════════════════════════════════════════╝
-  '''import os
 
-  if not os.path.exists(RESUME_PDF_PATH):
-      raise FileNotFoundError(f"Resume PDF not found: {RESUME_PDF_PATH}\n"
-                              "Please update RESUME_PDF_PATH in Cell 2.")
-
-  # Clickable hyperlinks embedded in PDF
-  doc = fitz.open(RESUME_PDF_PATH)
-  clickable_links = []
-  for page in doc:
-      for link in page.get_links():
-          uri = link.get("uri", "")
-          if uri:
-              clickable_links.append(uri)
-  doc.close()
-
-  # Visible text
-  _raw = ""
-  with pdfplumber.open(RESUME_PDF_PATH) as pdf:
-      for page in pdf.pages:
-          t = page.extract_text()
-          if t:
-              _raw += t + "\n"
-
-  URL_RE   = r'(https?://[^\s,)<>\"]+|www\.[^\s,)<>\"]+)'
-  EMAIL_RE = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-
-  text_links = re.findall(URL_RE, _raw)
-  all_links  = list(dict.fromkeys(clickable_links + text_links))
-
-  _emails = re.findall(EMAIL_RE, _raw)
-  email   = _emails[0] if _emails else None
-
-  clean_text = re.sub(r'\n{3,}', '\n\n',
-              re.sub(EMAIL_RE, '',
-              re.sub(URL_RE, '', _raw))).strip()
-
-  resume_content = {"raw": _raw.strip(), "clean": clean_text}
-
-  # Classify links by platform
-  PLATFORM_RULES = {
-      "linkedin": "linkedin", "github": "github", "gitlab": "gitlab",
-      "twitter": "twitter", "x.com": "twitter", "leetcode": "leetcode",
-      "kaggle": "kaggle", "medium": "blog", "dev.to": "blog",
-      "stackoverflow": "stackoverflow", "hackerrank": "hackerrank",
-      "codepen": "codepen", "huggingface": "huggingface",
-      "vercel": "portfolio", "netlify": "portfolio",
-      "behance": "portfolio", "dribbble": "portfolio",
-  }
-
-  def classify_link(url):
-      try:
-          domain = urlparse(url).netloc.lower().replace("www.", "")
-      except Exception:
-          domain = url.lower()
-      for keyword, category in PLATFORM_RULES.items():
-          if keyword in domain:
-              return category
-      return "other"
-
-  _seg = {}
-  for link in all_links:
-      cat = classify_link(link)
-      _seg.setdefault(cat, []).append(link)
-
-  def _pick(manual, key):
-      return manual.strip() if manual.strip() else _seg.get(key, [None])[0]
-'''
   linkedin      = MANUAL_LINKEDIN
   github        = MANUAL_GITHUB
   leetcode      = MANUAL_LEETCODE
