@@ -4,7 +4,7 @@ An AI-powered pipeline that aggregates candidate data from multiple platforms (L
 
 ---
 
-## 📌 Overvie
+## 📌 Overview
 
 This system performs:
 
