@@ -43,7 +43,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
   MANUAL_GITHUB        = platform_links.get("github", "")
   MANUAL_LEETCODE      = platform_links.get("leetcode", "")
   MANUAL_HACKERRANK    = platform_links.get("hackerrank", "")
-  MANUAL_STACKOVERFLOW = platform_links.get("stackoverflow", "")
+  MANUAL_STACKOVERFLOW = platform_links.get("stack_overflow", "")
 
   # ── API CREDENTIALS ───────────────────────────────────────────────────────────
   # Option A: set directly here
