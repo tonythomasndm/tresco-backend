@@ -3,11 +3,17 @@
 # ║  CELL 1 — INSTALL DEPENDENCIES                                              ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-from fastapi import FastAPI, HTTPException
+import builtins
+import sys
+import traceback
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from supabase import create_client, Client
 import time
 import random
-from typing import Dict
+from typing import Any, Dict
 from datetime import datetime, timezone
 import fitz          # PyMuPDF
 import pdfplumber
@@ -19,6 +25,7 @@ import math
 import pandas as pd
 from urllib.parse import urlparse
 from datetime import datetime, timezone
+from pydantic import BaseModel
 
 # 🔥 Supabase credentials
 SUPABASE_URL = "https://uankwdgpnouwmtgcainy.supabase.co"
@@ -26,13 +33,927 @@ SUPABASE_KEY = "sb_publishable_8a7DY7P5uPa8zZmQF9OKSQ_JLLM_aJt"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+
 app = FastAPI()
+
+
+def default_error_code(status_code: int) -> str:
+    return {
+        400: "bad_request",
+        404: "not_found",
+        422: "invalid_request",
+        500: "internal_server_error",
+        502: "bad_gateway",
+        503: "service_unavailable",
+    }.get(status_code, "request_failed")
+
+
+def build_error_payload(error_code: str, message: str, details: Any = None) -> dict:
+    error = {
+        "code": error_code,
+        "message": message,
+    }
+    if details is not None:
+        error["details"] = details
+    return {
+        "status": "error",
+        "error": error,
+    }
+
+
+def raise_api_error(status_code: int, error_code: str, message: str, details: Any = None):
+    payload = {
+        "code": error_code,
+        "message": message,
+    }
+    if details is not None:
+        payload["details"] = details
+    raise HTTPException(status_code=status_code, detail=payload)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_request: Request, exc: HTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict):
+        error_code = detail.get("code") or default_error_code(exc.status_code)
+        message = detail.get("message") or "Request failed."
+        details = detail.get("details")
+    else:
+        error_code = default_error_code(exc.status_code)
+        message = str(detail)
+        details = None
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=build_error_payload(error_code, message, details),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=build_error_payload(
+            "invalid_request",
+            "Request validation failed.",
+            exc.errors(),
+        ),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception):
+    traceback.print_exception(type(exc), exc, exc.__traceback__)
+    return JSONResponse(
+        status_code=500,
+        content=build_error_payload(
+            "internal_server_error",
+            "An unexpected error occurred while processing the request.",
+        ),
+    )
+
+
+def safe_log(*args, **kwargs):
+    try:
+        builtins.print(*args, **kwargs)
+    except UnicodeEncodeError:
+        sep = kwargs.get("sep")
+        end = kwargs.get("end")
+        stream = kwargs.get("file") or sys.stdout
+        flush = kwargs.get("flush", False)
+
+        if sep is None:
+            sep = " "
+        if end is None:
+            end = "\n"
+
+        encoding = getattr(stream, "encoding", None) or sys.getdefaultencoding() or "utf-8"
+        message = sep.join(str(arg) for arg in args)
+        try:
+            safe_message = message.encode(encoding, errors="backslashreplace").decode(encoding)
+        except LookupError:
+            safe_message = message.encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+        builtins.print(safe_message, end=end, file=stream, flush=flush)
+
+
+print = safe_log
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║  CELL 2 — INPUT PARAMETERS  (edit these before running)                    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
+def get_platform_links_by_user(user_id: str):
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise_api_error(
+            400,
+            "invalid_user_id",
+            "`user_id` must not be blank.",
+            {"field": "user_id"},
+        )
 
-# ── REQUIRED ──────────────────────────────────────────────────────────────────
-   # path to the candidate's resume PDF
+    get_user_or_error(normalized_user_id)
+    accounts = get_platform_accounts_by_user(normalized_user_id, include_profile_url=True)
+
+    platform_links = {}
+    for acc in accounts:
+        platform_name = normalize_platform_name(acc.get("platform_name", ""))
+        if platform_name == "stack_overflow":
+            platform_name = "stackoverflow"
+
+        profile_url = acc.get("profile_url")
+        if platform_name and profile_url:
+            platform_links[platform_name] = profile_url
+
+    if not platform_links:
+        raise_api_error(
+            404,
+            "platform_links_not_found",
+            "No valid platform links found for this user.",
+        )
+
+    return platform_links
+
+
+def normalize_platform_name(platform_name: str) -> str:
+    return re.sub(r"[\s\-]+", "_", (platform_name or "").strip().lower())
+
+
+def get_platform_score_key(platform_name: str) -> str:
+    normalized_name = normalize_platform_name(platform_name)
+    if normalized_name == "stackoverflow":
+        return "stack_overflow"
+    return normalized_name
+
+
+def get_user_or_error(user_id: str):
+    try:
+        user_res = supabase.table("users").select("id").eq("id", user_id).execute()
+    except Exception:
+        traceback.print_exc()
+        raise_api_error(
+            503,
+            "supabase_user_lookup_failed",
+            "Failed to fetch the user from Supabase.",
+        )
+
+    if not user_res.data:
+        raise_api_error(404, "user_not_found", "User not found.")
+
+    return user_res.data[0]
+
+
+def get_platform_accounts_by_user(user_id: str, include_profile_url: bool = False):
+    columns = "id, platform_name, profile_url" if include_profile_url else "id, platform_name"
+
+    try:
+        accounts_res = supabase.table("platform_accounts") \
+            .select(columns) \
+            .eq("user_id", user_id) \
+            .execute()
+    except Exception:
+        traceback.print_exc()
+        raise_api_error(
+            503,
+            "supabase_platform_lookup_failed",
+            "Failed to fetch platform accounts from Supabase.",
+        )
+
+    accounts = accounts_res.data or []
+    if not accounts:
+        raise_api_error(
+            404,
+            "platform_accounts_not_found",
+            "No platform accounts found for this user.",
+        )
+
+    return accounts
+
+
+def persist_score_results(user_id: str, result: Dict):
+    normalized_user_id = (user_id or "").strip()
+    if not normalized_user_id:
+        raise_api_error(
+            400,
+            "invalid_user_id",
+            "`user_id` must not be blank.",
+            {"field": "user_id"},
+        )
+
+    get_user_or_error(normalized_user_id)
+    accounts = get_platform_accounts_by_user(normalized_user_id)
+
+    current_time = datetime.now(timezone.utc).isoformat()
+    candidate_score = result.get("score", 0) or 0
+
+    try:
+        analysis_insert = supabase.table("candidate_score_analysis").insert({
+            "user_id": normalized_user_id,
+            "score": candidate_score,
+            "pros": result.get("pros", ""),
+            "cons": result.get("cons", ""),
+            "improvements": result.get("improvements", ""),
+            "is_fraud": False,
+            "created_at": current_time,
+        }).execute()
+    except Exception:
+        traceback.print_exc()
+        raise_api_error(
+            503,
+            "candidate_score_persistence_failed",
+            "Failed to store candidate score analysis in Supabase.",
+        )
+
+    if not analysis_insert.data:
+        raise_api_error(
+            503,
+            "candidate_score_persistence_failed",
+            "Supabase did not confirm candidate score analysis storage.",
+        )
+
+    print("💾 Stored candidate_score_analysis")
+
+    platform_scores = result.get("platform_scores") or {}
+    for account in accounts:
+        score_key = get_platform_score_key(account.get("platform_name", ""))
+        platform_score = platform_scores.get(score_key, 0) or 0
+
+        try:
+            insert_res = supabase.table("platform_score").insert({
+                "platform_account_id": account["id"],
+                "score": platform_score,
+                "created_at": current_time,
+            }).execute()
+        except Exception:
+            traceback.print_exc()
+            raise_api_error(
+                503,
+                "platform_score_persistence_failed",
+                f"Failed to store the platform score for {account.get('platform_name', 'unknown platform')}.",
+            )
+
+        if not insert_res.data:
+            raise_api_error(
+                503,
+                "platform_score_persistence_failed",
+                f"Supabase did not confirm platform score storage for {account.get('platform_name', 'unknown platform')}.",
+            )
+
+    print("💾 Stored platform scores")
+    
+
+LINKEDIN_EXPERIENCE_COLUMNS = [
+    "experience_index",
+    "job_title",
+    "company_name",
+    "employment_type",
+    "start_date",
+    "end_date",
+    "start_year",
+    "start_month",
+    "end_year",
+    "end_month",
+    "duration_months",
+    "is_current",
+    "company_industry",
+    "company_headcount_range",
+    "company_id",
+    "company_url",
+    "company_website",
+    "job_location",
+    "job_location_city",
+    "job_location_state",
+    "job_location_country",
+    "job_description",
+    "raw_job_title",
+    "raw_company_name",
+]
+
+LINKEDIN_EDUCATION_COLUMNS = [
+    "education_index",
+    "university_name",
+    "fields_of_study",
+    "start_date",
+    "end_date",
+    "start_year",
+    "start_month",
+    "end_year",
+    "end_month",
+    "duration_months",
+    "is_current",
+    "grade",
+    "description",
+    "social_url",
+    "university_id",
+    "logo",
+]
+
+LINKEDIN_SKILL_COLUMNS = [
+    "skill_index",
+    "skill_name",
+    "endorsement_count",
+]
+
+LINKEDIN_COMPANY_PRESTIGE = {
+    "openai": 100,
+    "deepmind": 100,
+    "google": 100,
+    "alphabet": 100,
+    "meta": 97,
+    "facebook": 97,
+    "apple": 96,
+    "microsoft": 95,
+    "amazon": 94,
+    "netflix": 94,
+    "nvidia": 94,
+    "tesla": 92,
+    "uber": 88,
+    "atlassian": 88,
+    "salesforce": 88,
+    "adobe": 87,
+    "oracle": 84,
+    "ibm": 82,
+    "deloitte": 78,
+    "accenture": 75,
+    "infosys": 72,
+    "tcs": 70,
+    "wipro": 68,
+    "capgemini": 68,
+}
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "present", "current"}
+
+
+def _linkedin_text(value, separator: str = ", ") -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        items = []
+        for item in value:
+            text = _linkedin_text(item, separator=separator)
+            if text:
+                items.append(text)
+        return separator.join(items)
+    if isinstance(value, dict):
+        for key in ("name", "title", "job_title", "company_name", "authority", "organization"):
+            text = _linkedin_text(value.get(key))
+            if text:
+                return text
+        return json.dumps(value, default=str, sort_keys=True)
+    return str(value).strip()
+
+
+def _dedupe_non_empty(values):
+    seen = set()
+    result = []
+    for value in values:
+        text = _linkedin_text(value)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def parse_linkedin_date(value, today=None):
+    today = today or datetime.now(timezone.utc)
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, dict):
+        year = _coerce_int(value.get("year"))
+        if year <= 0:
+            return None
+        month = min(max(_coerce_int(value.get("month"), 1), 1), 12)
+        day = min(max(_coerce_int(value.get("day"), 1), 1), 28)
+        return datetime(year, month, day, tzinfo=timezone.utc)
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    lowered = text.lower()
+    if lowered in {"present", "current", "now", "ongoing", "today", "till date"}:
+        return today
+
+    normalized = text.replace("/", "-")
+    for candidate in (normalized, text):
+        for fmt in ("%m-%Y", "%Y-%m", "%Y-%m-%d", "%m-%d-%Y", "%b %Y", "%B %Y", "%Y"):
+            try:
+                parsed = datetime.strptime(candidate, fmt)
+                if fmt in {"%m-%Y", "%Y-%m", "%b %Y", "%B %Y", "%Y"}:
+                    parsed = parsed.replace(day=1)
+                return parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _linkedin_month_index(dt: datetime) -> int:
+    return dt.year * 12 + dt.month
+
+
+def linkedin_months_between(start_dt, end_dt) -> int:
+    if not start_dt or not end_dt:
+        return 0
+    if end_dt < start_dt:
+        end_dt = start_dt
+    return (_linkedin_month_index(end_dt) - _linkedin_month_index(start_dt)) + 1
+
+
+def format_linkedin_date(value) -> str:
+    dt = parse_linkedin_date(value) if not isinstance(value, datetime) else value
+    return dt.date().isoformat() if dt else ""
+
+
+def normalize_linkedin_experience_rows(linkedin_raw_data, today=None):
+    today = today or datetime.now(timezone.utc)
+    experiences = []
+    if isinstance(linkedin_raw_data, dict):
+        experiences = linkedin_raw_data.get("experience") or linkedin_raw_data.get("experiences") or []
+
+    rows = []
+    for raw_entry in experiences:
+        if not isinstance(raw_entry, dict):
+            continue
+
+        start_dt = parse_linkedin_date(raw_entry.get("job_started_on") or raw_entry.get("start_date"), today=today)
+        end_source = raw_entry.get("job_ended_on") or raw_entry.get("end_date")
+        is_current = _coerce_bool(raw_entry.get("job_still_working")) or (bool(start_dt) and not end_source)
+        end_dt = parse_linkedin_date(end_source, today=today)
+        if is_current and start_dt:
+            end_dt = today
+        if start_dt and end_dt and end_dt < start_dt:
+            end_dt = start_dt
+
+        rows.append({
+            "experience_index": 0,
+            "job_title": _linkedin_text(raw_entry.get("job_title") or raw_entry.get("title") or raw_entry.get("raw_job_title")),
+            "company_name": _linkedin_text(raw_entry.get("company_name") or raw_entry.get("company") or raw_entry.get("raw_company_name")),
+            "employment_type": _linkedin_text(raw_entry.get("employment_type")),
+            "start_date": format_linkedin_date(start_dt),
+            "end_date": "" if is_current else format_linkedin_date(end_dt),
+            "start_year": start_dt.year if start_dt else None,
+            "start_month": start_dt.month if start_dt else None,
+            "end_year": None if (is_current or not end_dt) else end_dt.year,
+            "end_month": None if (is_current or not end_dt) else end_dt.month,
+            "duration_months": linkedin_months_between(start_dt, end_dt) if start_dt and end_dt else 0,
+            "is_current": is_current,
+            "company_industry": _linkedin_text(raw_entry.get("company_industry")),
+            "company_headcount_range": _linkedin_text(raw_entry.get("company_headcount_range")),
+            "company_id": _linkedin_text(raw_entry.get("company_id")),
+            "company_url": _linkedin_text(raw_entry.get("company_url")),
+            "company_website": _linkedin_text(raw_entry.get("company_website")),
+            "job_location": _linkedin_text(raw_entry.get("job_location")),
+            "job_location_city": _linkedin_text(raw_entry.get("job_location_city")),
+            "job_location_state": _linkedin_text(raw_entry.get("job_location_state")),
+            "job_location_country": _linkedin_text(raw_entry.get("job_location_country")),
+            "job_description": _linkedin_text(raw_entry.get("job_description")),
+            "raw_job_title": _linkedin_text(raw_entry.get("raw_job_title")),
+            "raw_company_name": _linkedin_text(raw_entry.get("raw_company_name")),
+        })
+
+    rows.sort(
+        key=lambda row: (
+            1 if row["is_current"] else 0,
+            row["start_year"] or 0,
+            row["start_month"] or 0,
+            row["end_year"] or 0,
+            row["end_month"] or 0,
+        ),
+        reverse=True,
+    )
+    for idx, row in enumerate(rows, start=1):
+        row["experience_index"] = idx
+    return rows
+
+
+def normalize_linkedin_education_rows(linkedin_raw_data, today=None):
+    today = today or datetime.now(timezone.utc)
+    education = []
+    if isinstance(linkedin_raw_data, dict):
+        education = linkedin_raw_data.get("education") or []
+
+    rows = []
+    for raw_entry in education:
+        if not isinstance(raw_entry, dict):
+            continue
+
+        start_dt = parse_linkedin_date(raw_entry.get("started_on") or raw_entry.get("start_date"), today=today)
+        end_dt = parse_linkedin_date(raw_entry.get("ended_on") or raw_entry.get("end_date"), today=today)
+        if start_dt and end_dt and end_dt < start_dt:
+            end_dt = start_dt
+        is_current = bool(start_dt and not end_dt)
+
+        fields = raw_entry.get("fields_of_study") or raw_entry.get("degree") or []
+        if isinstance(fields, str):
+            fields = [fields]
+
+        rows.append({
+            "education_index": 0,
+            "university_name": _linkedin_text(raw_entry.get("university_name")),
+            "fields_of_study": ", ".join(_dedupe_non_empty(fields)),
+            "start_date": format_linkedin_date(start_dt),
+            "end_date": "" if is_current else format_linkedin_date(end_dt),
+            "start_year": start_dt.year if start_dt else None,
+            "start_month": start_dt.month if start_dt else None,
+            "end_year": None if (is_current or not end_dt) else end_dt.year,
+            "end_month": None if (is_current or not end_dt) else end_dt.month,
+            "duration_months": linkedin_months_between(start_dt, end_dt) if start_dt and end_dt else 0,
+            "is_current": is_current,
+            "grade": _linkedin_text(raw_entry.get("grade")),
+            "description": _linkedin_text(raw_entry.get("description")),
+            "social_url": _linkedin_text(raw_entry.get("social_url")),
+            "university_id": _linkedin_text(raw_entry.get("university_id")),
+            "logo": _linkedin_text(raw_entry.get("logo")),
+        })
+
+    rows.sort(
+        key=lambda row: (
+            row["end_year"] or 0,
+            row["end_month"] or 0,
+            row["start_year"] or 0,
+            row["start_month"] or 0,
+        ),
+        reverse=True,
+    )
+    for idx, row in enumerate(rows, start=1):
+        row["education_index"] = idx
+    return rows
+
+
+def normalize_linkedin_skill_rows(linkedin_raw_data):
+    skills = []
+    if isinstance(linkedin_raw_data, dict):
+        skills = linkedin_raw_data.get("skills") or []
+
+    rows = []
+    seen = set()
+    for raw_skill in skills:
+        if isinstance(raw_skill, dict):
+            skill_name = _linkedin_text(raw_skill.get("name") or raw_skill.get("skill"))
+            endorsement_count = raw_skill.get("endorsement_count") or raw_skill.get("endorsements")
+        else:
+            skill_name = _linkedin_text(raw_skill)
+            endorsement_count = None
+        if not skill_name or skill_name in seen:
+            continue
+        seen.add(skill_name)
+        rows.append({
+            "skill_index": 0,
+            "skill_name": skill_name,
+            "endorsement_count": endorsement_count,
+        })
+
+    for idx, row in enumerate(rows, start=1):
+        row["skill_index"] = idx
+    return rows
+
+
+def compute_linkedin_timeline_metrics(experience_rows, education_rows, today=None):
+    today = today or datetime.now(timezone.utc)
+
+    experience_ranges = []
+    for row in experience_rows:
+        start_dt = parse_linkedin_date(row.get("start_date"), today=today)
+        end_dt = today if row.get("is_current") else parse_linkedin_date(row.get("end_date"), today=today)
+        if not start_dt:
+            continue
+        if not end_dt or end_dt < start_dt:
+            end_dt = start_dt
+        experience_ranges.append((start_dt, end_dt, row))
+
+    covered_months = set()
+    sorted_experience = sorted(experience_ranges, key=lambda item: item[0])
+    role_durations = []
+    title_levels = []
+    company_names = set()
+
+    for start_dt, end_dt, row in sorted_experience:
+        role_durations.append(linkedin_months_between(start_dt, end_dt))
+        title_levels.append(linkedin_title_level(row.get("job_title", "")))
+        if row.get("company_name"):
+            company_names.add(row["company_name"])
+        for month_idx in range(_linkedin_month_index(start_dt), _linkedin_month_index(end_dt) + 1):
+            covered_months.add(month_idx)
+
+    gaps = []
+    for (_, prev_end, _), (next_start, _, _) in zip(sorted_experience, sorted_experience[1:]):
+        gap_months = _linkedin_month_index(next_start) - _linkedin_month_index(prev_end) - 1
+        if gap_months > 0:
+            gaps.append(gap_months)
+
+    education_ranges = []
+    for row in education_rows:
+        start_dt = parse_linkedin_date(row.get("start_date"), today=today)
+        end_dt = today if row.get("is_current") else parse_linkedin_date(row.get("end_date"), today=today)
+        if start_dt and (not end_dt or end_dt < start_dt):
+            end_dt = start_dt
+        education_ranges.append((start_dt, end_dt, row))
+
+    dated_education = [entry for entry in education_ranges if entry[0] or entry[1]]
+    valid_education = [entry for entry in dated_education if not entry[0] or not entry[1] or entry[1] >= entry[0]]
+    reasonable_education = [
+        entry for entry in valid_education
+        if not entry[0] or not entry[1] or 3 <= linkedin_months_between(entry[0], entry[1]) <= 96
+    ]
+
+    progression_steps = sum(
+        1 for previous_level, next_level in zip(title_levels, title_levels[1:]) if next_level > previous_level
+    )
+
+    return {
+        "total_experience_months": len(covered_months),
+        "average_tenure_months": (sum(role_durations) / len(role_durations)) if role_durations else 0.0,
+        "longest_gap_months": max(gaps, default=0),
+        "total_gap_months": sum(gaps),
+        "current_roles": sum(1 for _, _, row in experience_ranges if row.get("is_current")),
+        "positions_count": len(experience_ranges),
+        "unique_companies": len(company_names),
+        "seniority_delta": max(0, title_levels[-1] - title_levels[0]) if len(title_levels) >= 2 else 0,
+        "progression_steps": progression_steps,
+        "dated_education_count": len(dated_education),
+        "valid_education_ratio": (len(valid_education) / len(dated_education)) if dated_education else 0.0,
+        "reasonable_education_ratio": (len(reasonable_education) / len(dated_education)) if dated_education else 0.0,
+    }
+
+
+def linkedin_title_level(title: str) -> int:
+    lowered = (title or "").lower()
+    if not lowered:
+        return 0
+
+    level = 0
+    keyword_groups = (
+        (1, ("intern", "student", "ambassador", "apprentice", "trainee", "volunteer")),
+        (2, ("assistant", "associate", "junior", "analyst", "fellow")),
+        (3, ("engineer", "developer", "consultant", "scientist", "specialist", "researcher", "teacher", "advisor", "producer", "member")),
+        (4, ("senior", "lead", "manager", "architect", "owner", "founder")),
+        (5, ("staff", "principal", "director", "head", "vice president", "vp", "chief", "president")),
+    )
+    for score, keywords in keyword_groups:
+        if any(keyword in lowered for keyword in keywords):
+            level = max(level, score)
+    return level or 3
+
+
+def estimate_linkedin_company_prestige(experience_rows) -> float:
+    best_score = 0.0
+    for row in experience_rows:
+        company_name = (row.get("company_name") or "").lower()
+        matched_score = max(
+            (score for keyword, score in LINKEDIN_COMPANY_PRESTIGE.items() if keyword in company_name),
+            default=0,
+        )
+        if matched_score:
+            best_score = max(best_score, matched_score)
+            continue
+
+        headcount = row.get("company_headcount_range") or ""
+        if headcount.startswith(("10001", "5001", "1001")):
+            best_score = max(best_score, 65.0)
+        elif headcount:
+            best_score = max(best_score, 55.0)
+
+    if best_score:
+        return best_score
+    return 50.0 if experience_rows else 0.0
+
+
+def prepare_linkedin_profile(linkedin_raw_data, fallback_profile_url: str = "", today=None):
+    today = today or datetime.now(timezone.utc)
+    linkedin_raw_data = linkedin_raw_data or {}
+
+    experience_rows = normalize_linkedin_experience_rows(linkedin_raw_data, today=today)
+    education_rows = normalize_linkedin_education_rows(linkedin_raw_data, today=today)
+    skill_rows = normalize_linkedin_skill_rows(linkedin_raw_data)
+    timeline_metrics = compute_linkedin_timeline_metrics(experience_rows, education_rows, today=today)
+
+    certs = linkedin_raw_data.get("certification") or linkedin_raw_data.get("certifications") or []
+    recs = linkedin_raw_data.get("recommendations_received") or linkedin_raw_data.get("recommendations") or []
+
+    experience_titles = _dedupe_non_empty(row.get("job_title") for row in experience_rows)
+    experience_companies = _dedupe_non_empty(row.get("company_name") for row in experience_rows)
+    education_details = []
+    for row in education_rows:
+        school = row.get("university_name", "")
+        field = row.get("fields_of_study", "")
+        detail = f"{school} ({field})" if school and field else school or field
+        if detail:
+            education_details.append(detail)
+
+    current_companies = [row["company_name"] for row in experience_rows if row.get("is_current") and row.get("company_name")]
+    skill_names = [row["skill_name"] for row in skill_rows if row.get("skill_name")]
+
+    linkedin_profile = {
+        "li_name": linkedin_raw_data.get("full_name") or linkedin_raw_data.get("display_name"),
+        "li_headline": linkedin_raw_data.get("profile_headline") or linkedin_raw_data.get("headline"),
+        "li_summary": linkedin_raw_data.get("description") or linkedin_raw_data.get("summary") or linkedin_raw_data.get("about"),
+        "li_location": linkedin_raw_data.get("location"),
+        "li_profile_url": linkedin_raw_data.get("profile_link") or fallback_profile_url,
+        "li_followers": linkedin_raw_data.get("followers") or linkedin_raw_data.get("followers_count"),
+        "li_connections": linkedin_raw_data.get("connections") or linkedin_raw_data.get("connections_count"),
+        "li_num_positions": len(experience_rows),
+        "li_total_exp_months": timeline_metrics["total_experience_months"],
+        "li_avg_tenure_months": round(timeline_metrics["average_tenure_months"], 1),
+        "li_longest_gap_months": timeline_metrics["longest_gap_months"],
+        "li_num_current_roles": timeline_metrics["current_roles"],
+        "li_exp_titles": " | ".join(experience_titles),
+        "li_exp_companies": " | ".join(experience_companies),
+        "li_num_education": len(education_rows),
+        "li_edu_details": " | ".join(education_details),
+        "li_num_skills": len(skill_names),
+        "li_skills": ", ".join(skill_names[:30]),
+        "li_num_certs": len(certs),
+        "li_cert_names": ", ".join(_dedupe_non_empty(
+            (cert.get("name") if isinstance(cert, dict) else cert) for cert in certs
+        )),
+        "li_num_recommendations": len(recs),
+        "li_has_photo": bool(linkedin_raw_data.get("avatar_url") or linkedin_raw_data.get("profile_picture")),
+        "li_has_summary": bool(linkedin_raw_data.get("description") or linkedin_raw_data.get("summary") or linkedin_raw_data.get("about")),
+        "li_has_experience": bool(experience_rows),
+        "li_has_education": bool(education_rows),
+        "li_has_skills": bool(skill_rows),
+        "li_has_certs": bool(certs),
+        "li_has_recommendations": bool(recs),
+        "li_current_company": current_companies[0] if current_companies else linkedin_raw_data.get("current_company_name"),
+        "li_country": linkedin_raw_data.get("country"),
+    }
+
+    return linkedin_profile, experience_rows, education_rows, skill_rows, timeline_metrics
+
+
+def score_linkedin_profile(
+    linkedin_profile,
+    linkedin_raw_data,
+    experience_rows,
+    education_rows,
+    skill_rows,
+    llm_scores=None,
+    today=None,
+):
+    today = today or datetime.now(timezone.utc)
+    llm_scores = llm_scores or {}
+    timeline_metrics = compute_linkedin_timeline_metrics(experience_rows, education_rows, today=today)
+
+    total_exp_months = timeline_metrics["total_experience_months"]
+    avg_tenure_months = timeline_metrics["average_tenure_months"]
+    longest_gap_months = timeline_metrics["longest_gap_months"]
+    total_gap_months = timeline_metrics["total_gap_months"]
+    current_roles = timeline_metrics["current_roles"]
+    positions_count = timeline_metrics["positions_count"]
+
+    skills_count = len(skill_rows)
+    recommendations_count = _coerce_int(linkedin_profile.get("li_num_recommendations"))
+    connections = _safe_float(linkedin_profile.get("li_connections"))
+    followers = _safe_float(linkedin_profile.get("li_followers"))
+
+    experience_text = " ".join(_dedupe_non_empty([
+        linkedin_profile.get("li_headline"),
+        linkedin_profile.get("li_summary"),
+        *(row.get("job_title") for row in experience_rows),
+    ])).lower()
+    relevant_skills = 0
+    for row in skill_rows:
+        skill_name = row.get("skill_name", "").lower()
+        tokens = [token for token in re.split(r"[^a-z0-9+.#]+", skill_name) if len(token) > 2]
+        if skill_name and (skill_name in experience_text or any(token in experience_text for token in tokens)):
+            relevant_skills += 1
+    skill_relevance_ratio = (relevant_skills / skills_count) if skills_count else 0.0
+
+    featured = linkedin_raw_data.get("featured") or []
+    publications = linkedin_raw_data.get("publication") or linkedin_raw_data.get("publications") or []
+    projects = linkedin_raw_data.get("project") or linkedin_raw_data.get("projects") or []
+    activity_items = [item for item in [*featured, *publications, *projects] if isinstance(item, dict)]
+    recent_activity_count = 0
+    for item in activity_items:
+        activity_date = parse_linkedin_date(
+            item.get("startedOn") or item.get("started_on") or item.get("publishedOn") or item.get("date"),
+            today=today,
+        )
+        if activity_date and (today - activity_date).days <= 730:
+            recent_activity_count += 1
+
+    summary_word_count = len(str(linkedin_profile.get("li_summary") or "").split())
+    profile_sections = [
+        bool(linkedin_profile.get("li_name")),
+        bool(linkedin_profile.get("li_headline")),
+        bool(linkedin_profile.get("li_summary")),
+        bool(linkedin_profile.get("li_location")),
+        bool(linkedin_profile.get("li_has_photo")),
+        bool(experience_rows),
+        bool(education_rows),
+        bool(skill_rows),
+        bool(linkedin_profile.get("li_num_certs")),
+        bool(linkedin_profile.get("li_num_recommendations")),
+        bool(linkedin_profile.get("li_current_company")),
+    ]
+
+    education_rows_with_fields = [row for row in education_rows if row.get("fields_of_study")]
+    dated_education_ratio = (
+        timeline_metrics["dated_education_count"] / len(education_rows)
+        if education_rows else 0.0
+    )
+
+    rule_scores = {
+        "employment_consistency_score": max(0.0, min(100.0,
+            42.0
+            + min(total_exp_months / 72.0, 1.0) * 25.0
+            + min(avg_tenure_months / 24.0, 1.0) * 20.0
+            + (8.0 if current_roles else 0.0)
+            - min(longest_gap_months / 12.0, 1.0) * 25.0
+            - min(total_gap_months / 24.0, 1.0) * 10.0
+        )),
+        "career_progression_trajectory": max(0.0, min(100.0,
+            35.0
+            + min(timeline_metrics["seniority_delta"], 4) * 11.0
+            + min(timeline_metrics["progression_steps"], 3) * 9.0
+            + min(positions_count / 5.0, 1.0) * 12.0
+            + min(avg_tenure_months / 24.0, 1.0) * 12.0
+            + (8.0 if current_roles else 0.0)
+        )),
+        "company_prestige_score": estimate_linkedin_company_prestige(experience_rows),
+        "skill_endorsement_credibility": max(0.0, min(100.0,
+            min(skills_count / 20.0, 1.0) * 70.0
+            + skill_relevance_ratio * 20.0
+            + (10.0 if skills_count >= 5 else 0.0)
+        )),
+        "recommendation_authenticity": max(0.0, min(100.0,
+            min(recommendations_count / 5.0, 1.0) * 75.0
+            + (15.0 if recommendations_count else 0.0)
+            + min(current_roles, 2) * 5.0
+        )),
+        "profile_completeness": max(0.0, min(100.0, (sum(profile_sections) / len(profile_sections)) * 100.0)),
+        "network_size_quality": max(0.0, min(100.0, min(((connections * 0.75) + (followers * 0.25)) / 500.0, 1.0) * 100.0)),
+        "education_verification_score": max(0.0, min(100.0,
+            (25.0 if education_rows else 0.0)
+            + dated_education_ratio * 25.0
+            + timeline_metrics["valid_education_ratio"] * 25.0
+            + timeline_metrics["reasonable_education_ratio"] * 15.0
+            + min(len(education_rows_with_fields) / 2.0, 1.0) * 10.0
+        )),
+        "activity_frequency_score": max(0.0, min(100.0,
+            min(len(activity_items) / 6.0, 1.0) * 70.0
+            + min(recent_activity_count / 3.0, 1.0) * 30.0
+        )),
+        "content_quality_score": max(0.0, min(100.0,
+            min(summary_word_count / 120.0, 1.0) * 55.0
+            + min(len(publications) / 3.0, 1.0) * 25.0
+            + min(len(featured) / 3.0, 1.0) * 10.0
+            + (10.0 if linkedin_profile.get("li_headline") else 0.0)
+        )),
+    }
+
+    final_scores = {}
+    date_driven_keys = {
+        "employment_consistency_score",
+        "career_progression_trajectory",
+        "education_verification_score",
+    }
+    for key, rule_score in rule_scores.items():
+        llm_value = llm_scores.get(key)
+        try:
+            llm_value = float(llm_value)
+        except (TypeError, ValueError):
+            llm_value = -1
+
+        if llm_value >= 0:
+            llm_weight = 0.2 if key in date_driven_keys else 0.35
+            blended = (rule_score * (1.0 - llm_weight)) + (max(0.0, min(100.0, llm_value)) * llm_weight)
+            final_scores[key] = round(max(0.0, min(100.0, blended)), 2)
+        else:
+            final_scores[key] = round(max(0.0, min(100.0, rule_score)), 2)
+
+    return final_scores
+
+
+# path to the candidate's resume PDF
 def simulated_ml_model(platform_links:dict[str, str]):
   print("🚀 ML Model started...")
   platform_links = {k.lower(): v for k, v in platform_links.items()}
@@ -43,7 +964,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
   MANUAL_GITHUB        = platform_links.get("github", "")
   MANUAL_LEETCODE      = platform_links.get("leetcode", "")
   MANUAL_HACKERRANK    = platform_links.get("hackerrank", "")
-  MANUAL_STACKOVERFLOW = platform_links.get("stack_overflow", "")
+  MANUAL_STACKOVERFLOW = platform_links.get("stackoverflow", "")
 
   # ── API CREDENTIALS ───────────────────────────────────────────────────────────
   # Option A: set directly here
@@ -52,7 +973,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
   AZURE_OPENAI_API_KEY    = "CWcXBMalpGqTsxcKFF3movpCCR0xGwpQtMFEfIZEDTEd6oTsFtdlJQQJ99CDACYeBjFXJ3w3AAABACOGYHIY"   # paste your Azure OpenAI key
 
   GITHUB_TOKEN       = ""   # optional — raises rate limit
-  DATAMAGNET_TOKEN   = "8e292d40c1dcec5d2e8ab5b6a6a13a8db142935ba936dad31375b4e781991c7d"   # required for LinkedIn
+  DATAMAGNET_TOKEN   = "b705e77627b3539d6ef6e4d5dddf67395fa2c3229a1ba514de0dabc433745eaf"   # required for LinkedIn
   KAGGLE_USERNAME    = ""   # required for Kaggle
   KAGGLE_KEY         = ""   # required for Kaggle
   SO_API_KEY         = ""   # optional — raises quota
@@ -414,6 +1335,10 @@ def simulated_ml_model(platform_links:dict[str, str]):
   # ╚══════════════════════════════════════════════════════════════════════════════╝
   linkedin_profile = {}
   linkedin_raw_data = {}   # kept for LLM stage
+  linkedin_experience_rows = []
+  linkedin_education_rows = []
+  linkedin_skill_rows = []
+  linkedin_timeline_metrics = {}
 
   if linkedin and DATAMAGNET_TOKEN:
       try:
@@ -425,61 +1350,17 @@ def simulated_ml_model(platform_links:dict[str, str]):
           raw = r.json()
           data = raw.get("message", raw) if isinstance(raw, dict) else {}
           linkedin_raw_data = data
+          linkedin_profile, linkedin_experience_rows, linkedin_education_rows, linkedin_skill_rows, linkedin_timeline_metrics = prepare_linkedin_profile(
+              data,
+              fallback_profile_url=linkedin,
+          )
 
-          experiences = data.get("experience") or data.get("experiences") or []
-          exp_titles    = [e.get("job_title") or e.get("title", "") for e in experiences]
-          exp_companies = [e.get("company_name") or e.get("company", "") for e in experiences]
-
-          def _months(exp):
-              try:
-                  fmt = "%m-%Y"
-                  start = datetime.strptime(str(exp.get("job_started_on") or exp.get("start_date", ""))[:7], fmt)
-                  end_raw = exp.get("job_ended_on") or exp.get("end_date") or ""
-                  end = datetime.strptime(str(end_raw)[:7], fmt) if end_raw else datetime.now()
-                  return max(0, (end - start).days // 30)
-              except Exception:
-                  return 0
-
-          total_exp_months = sum(_months(e) for e in experiences)
-          education  = data.get("education") or []
-          skills     = data.get("skills") or []
-          skill_names= [s if isinstance(s, str) else s.get("name", "") for s in skills]
-          certs      = data.get("certification") or data.get("certifications") or []
-          recs       = data.get("recommendations_received") or data.get("recommendations") or []
-
-          linkedin_profile = {
-              "li_name":               data.get("full_name") or data.get("display_name"),
-              "li_headline":           data.get("profile_headline") or data.get("headline"),
-              "li_summary":            data.get("description") or data.get("summary") or data.get("about"),
-              "li_location":           data.get("location"),
-              "li_profile_url":        data.get("profile_link") or linkedin,
-              "li_followers":          data.get("followers") or data.get("followers_count"),
-              "li_connections":        data.get("connections") or data.get("connections_count"),
-              "li_num_positions":      len(experiences),
-              "li_total_exp_months":   total_exp_months,
-              "li_exp_titles":         " | ".join(str(t) for t in exp_titles),
-              "li_exp_companies":      " | ".join(str(c) for c in exp_companies),
-              "li_num_education":      len(education),
-              "li_edu_details":        " | ".join(
-                  f"{e.get('university_name','')} ({', '.join(e.get('fields_of_study',[]) if isinstance(e.get('fields_of_study'), list) else [str(e.get('fields_of_study',''))])})" for e in education
-              ),
-              "li_num_skills":         len(skill_names),
-              "li_skills":             ", ".join(skill_names[:30]),
-              "li_num_certs":          len(certs),
-              "li_cert_names":         ", ".join(c.get("name", "") if isinstance(c, dict) else str(c) for c in certs),
-              "li_num_recommendations":len(recs),
-              "li_has_photo":          bool(data.get("avatar_url") or data.get("profile_picture")),
-              "li_has_summary":        bool(data.get("description") or data.get("summary")),
-              "li_has_experience":     len(experiences) > 0,
-              "li_has_education":      len(education) > 0,
-              "li_has_skills":         len(skill_names) > 0,
-              "li_has_certs":          len(certs) > 0,
-              "li_has_recommendations":len(recs) > 0,
-              "li_current_company":    data.get("current_company_name"),
-              "li_country":            data.get("country"),
-          }
-
-          print(f"✅ LinkedIn — {linkedin_profile.get('li_name')} | {len(experiences)} positions | {len(skill_names)} skills | {total_exp_months} months exp")
+          print(
+              f"✅ LinkedIn — {linkedin_profile.get('li_name')} | "
+              f"{len(linkedin_experience_rows)} positions | "
+              f"{len(linkedin_skill_rows)} skills | "
+              f"{linkedin_profile.get('li_total_exp_months', 0)} months exp"
+          )
       except Exception as e:
           print(f"✗ LinkedIn error: {e}")
   elif not DATAMAGNET_TOKEN:
@@ -650,13 +1531,9 @@ def simulated_ml_model(platform_links:dict[str, str]):
   # LinkedIn sub-tables
   if linkedin_raw_data:
       pd.json_normalize(linkedin_raw_data).to_csv('linkedin_profile_full.csv', index=False)
-      exp_list = linkedin_raw_data.get('experience') or []
-      edu_list = linkedin_raw_data.get('education') or []
-      skill_list = linkedin_raw_data.get('skills') or []
-      if exp_list:   pd.DataFrame(exp_list).to_csv('linkedin_experience.csv', index=False)
-      if edu_list:   pd.DataFrame(edu_list).to_csv('linkedin_education.csv', index=False)
-      if skill_list:
-          pd.DataFrame({'skill_name': [s if isinstance(s, str) else s.get('name','') for s in skill_list]}).to_csv('linkedin_skills.csv', index=False)
+      pd.DataFrame(linkedin_experience_rows, columns=LINKEDIN_EXPERIENCE_COLUMNS).to_csv('linkedin_experience.csv', index=False)
+      pd.DataFrame(linkedin_education_rows, columns=LINKEDIN_EDUCATION_COLUMNS).to_csv('linkedin_education.csv', index=False)
+      pd.DataFrame(linkedin_skill_rows, columns=LINKEDIN_SKILL_COLUMNS).to_csv('linkedin_skills.csv', index=False)
 
   print(f"✅ Stage 1 complete — {len(all_data)} columns in master profile")
   print(f"   Platforms scraped: GitHub={bool(github_profile)}, LeetCode={bool(leetcode_profile)}, HackerRank={bool(hackerrank_profile)}, LinkedIn={bool(linkedin_profile)}, StackOverflow={bool(stackoverflow_profile)}")
@@ -896,23 +1773,20 @@ def simulated_ml_model(platform_links:dict[str, str]):
   if linkedin_profile:
       li_llm = llm_score(LINKEDIN_LLM_PROMPT, json.dumps({
           'profile': linkedin_profile,
-          'raw_experience': linkedin_raw_data.get('experience', [])[:5],
-          'raw_education':  linkedin_raw_data.get('education', [])[:5],
+          'experience_rows': linkedin_experience_rows[:8],
+          'education_rows':  linkedin_education_rows[:5],
+          'skill_rows':      linkedin_skill_rows[:20],
+          'timeline_metrics': linkedin_timeline_metrics,
       }, default=str))
 
-      linkedin_scores = {
-          'employment_consistency_score':  clamp(li_llm.get('employment_consistency_score', 40)),
-          'career_progression_trajectory': clamp(li_llm.get('career_progression_trajectory', 40)),
-          'company_prestige_score':        clamp(li_llm.get('company_prestige_score', 30)),
-          'skill_endorsement_credibility': clamp(li_llm.get('skill_endorsement_credibility', 40)),
-          'recommendation_authenticity':   clamp(li_llm.get('recommendation_authenticity', 20)),
-          'profile_completeness':          clamp(li_llm.get('profile_completeness', 50)),
-          'network_size_quality':          clamp(li_llm.get('network_size_quality',
-                                                min(safe(linkedin_profile.get('li_connections', 0), 0) / 10, 100))),
-          'education_verification_score':  clamp(li_llm.get('education_verification_score', 40)),
-          'activity_frequency_score':      clamp(li_llm.get('activity_frequency_score', 20)),
-          'content_quality_score':         clamp(li_llm.get('content_quality_score', 20)),
-      }
+      linkedin_scores = score_linkedin_profile(
+          linkedin_profile,
+          linkedin_raw_data,
+          linkedin_experience_rows,
+          linkedin_education_rows,
+          linkedin_skill_rows,
+          llm_scores=li_llm,
+      )
       pd.DataFrame([linkedin_scores]).to_csv('linkedin_scores.csv', index=False)
       print("✅ LinkedIn sub-metrics scored → linkedin_scores.csv")
   else:
@@ -1219,18 +2093,30 @@ def simulated_ml_model(platform_links:dict[str, str]):
   # Package C: Career behaviour
   pkg_behavior = {
       'career_history': [
-          {'title': e.get('job_title', ''), 'company': e.get('company_name', ''),
-          'type': e.get('employment_type', ''), 'started': e.get('job_started_on', ''),
-          'ended': e.get('job_ended_on', 'Present'), 'current': e.get('job_still_working', False)}
-          for e in (linkedin_raw_data.get('experience') or [])[:10]
+          {
+              'title': row.get('job_title', ''),
+              'company': row.get('company_name', ''),
+              'type': row.get('employment_type', ''),
+              'started': row.get('start_date', ''),
+              'ended': row.get('end_date') or 'Present',
+              'current': row.get('is_current', False),
+              'duration_months': row.get('duration_months', 0),
+          }
+          for row in linkedin_experience_rows[:10]
       ],
       'education_history': [
-          {'school': e.get('university_name', ''), 'degree': ', '.join(e.get('fields_of_study', []))}
-          for e in (linkedin_raw_data.get('education') or [])[:5]
+          {
+              'school': row.get('university_name', ''),
+              'degree': row.get('fields_of_study', ''),
+              'started': row.get('start_date', ''),
+              'ended': row.get('end_date') or 'Present',
+              'duration_months': row.get('duration_months', 0),
+          }
+          for row in linkedin_education_rows[:5]
       ],
       'certifications_list': [
           f"{c.get('name', '')} – {c.get('authority', '')}"
-          for c in (linkedin_raw_data.get('certification') or [])
+          for c in ((linkedin_raw_data.get('certification') or linkedin_raw_data.get('certifications') or []))
       ] or ['No certifications found'],
       'platform_scores': {p: platform_scores[p] for p in platform_scores if platform_scores[p]},
       'overall_score': overall_score,
@@ -1404,13 +2290,15 @@ def simulated_ml_model(platform_links:dict[str, str]):
   analysis['grade']  = grade
   analysis['verdict']= lbl
   def safe_score(val):
+    if val is None:
+        return -1   # 🔥 missing platform
     try:
-        return int((val or 0) * 10)
+        return int(val * 10)
     except:
-        return 0
-  # --- Add the specific format requested by user ---
+        return -1
+    # --- Add the specific format requested by user ---
   # Mapping internal keys to user-requested keys
-  analysis['user_formatted_result'] = {
+  analysis['user_formatted_result'] = { 
     "score": analysis.get("candidate_report", {}).get("overall_trust_score", 0),
 
     "pros": list_to_paragraph(
@@ -1429,14 +2317,16 @@ def simulated_ml_model(platform_links:dict[str, str]):
         analysis.get("candidate_report", {})
         .get("areas_to_improve", ["Improve platform activity"])
     ),
+
     "platform_scores": {
         "github": safe_score(platform_scores.get('GitHub')),
         "leetcode": safe_score(platform_scores.get('LeetCode')),
         "hackerrank": safe_score(platform_scores.get('HackerRank')),
         "linkedin": safe_score(platform_scores.get('LinkedIn')),
         "stack_overflow": safe_score(platform_scores.get('StackOverflow'))
-    }}
-  # Scraper metadata
+    }
+}
+# Scraper metadata
   analysis['scraper_metadata'] = {
       'linkedin_url':     linkedin,
       'github_url':       github,
@@ -1480,88 +2370,64 @@ def simulated_ml_model(platform_links:dict[str, str]):
 
   return analysis['user_formatted_result']
 
-# endpoint
+class ScoreRequest(BaseModel):
+    user_id: str
+
 @app.post("/generate-score")
-def generate_score(user_id: str):
+def generate_score(req: ScoreRequest):
+    user_id = (req.user_id or "").strip()
+    if not user_id:
+        raise_api_error(
+            400,
+            "invalid_user_id",
+            "`user_id` must not be blank.",
+            {"field": "user_id"},
+        )
+
+    print("👉 Received user_id:", user_id)
+
+    # 1️⃣ Fetch links
+    platform_links = get_platform_links_by_user(user_id)
+
+    print("📦 Fetched links:", platform_links)
+
+    # 2️⃣ Run ML model
     try:
-        # 1️⃣ Validate user
-        user = supabase.table("users").select("id").eq("id", user_id).execute()
-        if not user.data:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        # 2️⃣ Fetch platform accounts
-        accounts_res = supabase.table("platform_accounts") \
-            .select("id, platform_name, profile_url") \
-            .eq("user_id", user_id) \
-            .execute()
-
-        accounts = accounts_res.data
-        if not accounts:
-            raise HTTPException(status_code=404, detail="No platform accounts found")
-
-        # 3️⃣ Prepare platform links
-        platform_links = {
-            acc["platform_name"]: acc["profile_url"]
-            for acc in accounts
-        }
-
-        print("📦 Platform Links:", platform_links)
-
-        # 4️⃣ Run ML Model (blocking)
         result = simulated_ml_model(platform_links)
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise_api_error(
+            502,
+            "model_execution_failed",
+            "The scoring pipeline failed while generating the candidate score.",
+        )
 
-        if not result:
-            raise HTTPException(status_code=404, detail="ML model failed")
+    if not result:
+        raise_api_error(
+            502,
+            "model_execution_failed",
+            "The scoring pipeline returned no result.",
+        )
 
-        # ⏱️ Current UTC time
-        current_time = datetime.now(timezone.utc).isoformat()
+    if not isinstance(result, dict):
+        raise_api_error(
+            502,
+            "model_response_invalid",
+            "The scoring pipeline returned an invalid response payload.",
+        )
 
-        # 5️⃣ Insert into candidate_score_analysis
-        analysis_insert = supabase.table("candidate_score_analysis").insert({
-            "user_id": user_id,
-            "score": analysis['mathematical_score'],
-            "pros": result["pros"],
-            "cons": result["cons"],
-            "improvements": result["improvements"],
-            "is_fraud": False,
-            "created_at": current_time
-        }).execute()
+    # 3️⃣ Store candidate and platform scores in Supabase
+    persist_score_results(user_id, result)
 
-        if not analysis_insert.data:
-            raise HTTPException(status_code=404, detail="Failed to store analysis")
+    return {
+        "status": "success",
+        "data": result
+    }
 
-        print("💾 Stored candidate_score_analysis")
 
-        # 6️⃣ Insert platform scores
-        for acc in accounts:
-            platform = acc["platform_name"]
-            account_id = acc["id"]
-
-            score = result["platform_scores"].get(platform, 0)
-
-            insert_res = supabase.table("platform_score").insert({
-                "platform_account_id": account_id,
-                "score": score,
-                "created_at": current_time
-            }).execute()
-
-            if not insert_res.data:
-                raise HTTPException(status_code=404, detail=f"Failed to store score for {platform}")
-
-        print("💾 Stored platform scores")
-
-        # ✅ SUCCESS RESPONSE
-        return {
-            "status": "success",
-            "data": result
-        }
-
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        print("❌ Error:", str(e))
-        raise HTTPException(status_code=404, detail="Something went wrong")
+        
 '''@app.post("/test-links")
 def test_links(platform_links: dict[str, str]):
     try:
