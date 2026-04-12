@@ -39,7 +39,7 @@ app = FastAPI()
 origins = [
     "http://localhost:5173",  # your frontend (Vite)
     "http://localhost:3000",  # if React
-    "https://tresco.vercel.app/"  # (for testing only)
+    "https://tresco.vercel.app"  # (for testing only)
 ]
 
 app.add_middleware(
