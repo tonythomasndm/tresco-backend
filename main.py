@@ -986,7 +986,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
   AZURE_OPENAI_API_KEY    = "CWcXBMalpGqTsxcKFF3movpCCR0xGwpQtMFEfIZEDTEd6oTsFtdlJQQJ99CDACYeBjFXJ3w3AAABACOGYHIY"   # paste your Azure OpenAI key
 
   GITHUB_TOKEN       = ""   # optional — raises rate limit
-  DATAMAGNET_TOKEN   = "b705e77627b3539d6ef6e4d5dddf67395fa2c3229a1ba514de0dabc433745eaf"   # required for LinkedIn
+  DATAMAGNET_TOKEN   = "c74d3048f38115659b73c81a276f0f91b172111cc06d26544130caad99280838"   # required for LinkedIn
   KAGGLE_USERNAME    = ""   # required for Kaggle
   KAGGLE_KEY         = ""   # required for Kaggle
   SO_API_KEY         = ""   # optional — raises quota
