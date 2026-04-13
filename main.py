@@ -264,6 +264,7 @@ def persist_score_results(user_id: str, result: Dict):
             "score": candidate_score,
             "pros": result.get("pros", ""),
             "cons": result.get("cons", ""),
+            "interview_questions": result.get("interview_questions", ""),
             "improvements": result.get("improvements", ""),
             "is_fraud": False,
             "created_at": current_time,
@@ -2223,6 +2224,19 @@ def simulated_ml_model(platform_links:dict[str, str]):
   # ╔══════════════════════════════════════════════════════════════════════════════╗
   # ║  CELL 21 — ASSEMBLE & SAVE candidate_analysis.json                         ║
   # ╚══════════════════════════════════════════════════════════════════════════════╝
+  def format_interview_qa(probes):
+    if not probes:
+        return ""
+
+    formatted = []
+    for i, p in enumerate(probes, 1):
+        q = p.get("question", "")
+        a = p.get("Answer", "")
+
+        formatted.append(f"Q{i}. {q} Ans{i}: {a}")
+
+    return " ".join(formatted)
+      
   def list_to_paragraph(items):
     if not items:
         return ""
@@ -2257,6 +2271,11 @@ def simulated_ml_model(platform_links:dict[str, str]):
         analysis.get("recruiter_report", {})
         .get("reliability_assessment", {})
         .get("red_flags", ["No major risks identified"])
+    ),
+
+    "interview_questions": format_interview_qa(
+    analysis.get("recruiter_report", {})
+    .get("Recruiter_interview_probe_suggestions", [])
     ),
 
     "improvements": list_to_paragraph(
