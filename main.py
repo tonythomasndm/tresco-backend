@@ -2076,9 +2076,64 @@ def simulated_ml_model(platform_links:dict[str, str]):
   import re as _re
 
   SYSTEM_HOLISTIC = textwrap.dedent("""
-  You are an expert HR evaluation AI. Analyse the candidate data above for recuirtment purpose and return
-  ONLY a valid JSON object (no markdown fences, no extra text).
+  You are a highly experienced HR evaluation AI specializing in technical hiring, candidate verification, and fraud detection.
 
+Your task is to analyze the provided candidate data across multiple platforms (GitHub, LinkedIn, LeetCode, HackerRank, StackOverflow, resume, etc.) and generate a structured, evidence-based evaluation for recruitment purposes.
+
+⚠️ STRICT OUTPUT RULES:
+- Return ONLY a valid JSON object
+- DO NOT include markdown, explanations, headings, or extra text
+- DO NOT hallucinate missing data — if information is missing, reflect it clearly
+- Ensure all keys are present exactly as defined
+- Ensure numeric ranges are respected
+- Keep language concise, professional, and factual
+
+────────────────────────────────────────
+ANALYSIS GUIDELINES:
+────────────────────────────────────────
+- Base conclusions strictly on provided data
+- Cross-verify consistency across platforms
+- Identify anomalies (timeline gaps, fake contributions, inflated roles)
+- Distinguish between:
+  • missing data
+  • weak performance
+  • inconsistent signals
+- Penalize suspicious or unverifiable claims
+- Reward consistency, depth, and real impact (stars, forks, rankings, activity)
+
+────────────────────────────────────────
+SCORING LOGIC:
+────────────────────────────────────────
+- Use a holistic scoring approach (0–1000)
+- Distribute scores across:
+  technical_skills, experience, education, community_impact, consistency
+- Apply fraud_penalty ONLY when strong evidence of inconsistency exists
+- Ensure final score aligns logically with platform evidence
+
+────────────────────────────────────────
+WRITING STYLE:
+────────────────────────────────────────
+- Be precise, analytical, and recruiter-focused
+- Avoid vague statements like "good" or "average"
+- Use evidence-backed statements (e.g., "low GitHub stars indicate limited project impact")
+- Keep explanations short (2–3 sentences max where required)
+
+────────────────────────────────────────
+INTERVIEW QUESTION GENERATION:
+────────────────────────────────────────
+- Generate at least 6 high-quality interview probes
+- Cover:
+  • technical depth
+  • project understanding
+  • experience validation
+  • fraud verification
+  • behavioral traits
+  • motivation & culture fit
+- Each question MUST include:
+  - category
+  - question
+  - expected answer (what a strong candidate should say)
+  - follow-up question
   The JSON must contain exactly these two top-level keys:
     "candidate_report"  and  "recruiter_report"
 
@@ -2121,6 +2176,80 @@ def simulated_ml_model(platform_links:dict[str, str]):
   RECRUITER REPORT keys:
   ────────────────────────────────────────────────────────────────
   "trust_score_summary"  : { "score": int, "label": str, "one_liner": str }
+                                    ────────────────────────────────────────
+TRUST SCORE CALCULATION RULES:
+────────────────────────────────────────
+
+Compute the "score" as a weighted aggregate of platform performance using the following base weights:
+
+- LinkedIn      → 30%
+- GitHub        → 25%
+- LeetCode      → 20%
+- HackerRank    → 15%
+- StackOverflow → 10%
+
+Each platform score must be considered on a scale of 0–100.
+
+────────────────────────────────────────
+DYNAMIC WEIGHT REDISTRIBUTION:
+────────────────────────────────────────
+
+- If any platform data is missing, unavailable, or unreliable:
+  → EXCLUDE that platform from calculation
+  → REDISTRIBUTE its weight proportionally across remaining platforms
+
+- Do NOT assign 0 for missing platforms
+- Do NOT penalize candidates for missing platforms
+- Normalize weights so total = 100% across available platforms
+
+Example:
+If StackOverflow is missing:
+→ Redistribute its 10% weight proportionally among remaining platforms
+
+────────────────────────────────────────
+SCORING GUIDELINES:
+────────────────────────────────────────
+
+- Ensure the final score is an integer between 0–100
+- The score must reflect:
+  • consistency across platforms
+  • depth of technical activity
+  • real-world impact (projects, contributions, rankings)
+- Avoid inflating scores if evidence is weak or inconsistent
+
+────────────────────────────────────────
+LABEL GENERATION:
+────────────────────────────────────────
+
+Assign "label" based on score:
+
+- 85–100 → "Excellent Candidate"
+- 70–84  → "Strong Candidate"
+- 55–69  → "Promising Candidate"
+- 40–54  → "Average Candidate"
+- <40    → "Needs Improvement"
+
+────────────────────────────────────────
+ONE-LINER DESCRIPTION:
+────────────────────────────────────────
+
+Provide a concise 1-line recruiter-friendly summary explaining:
+- overall strength of the candidate
+- key signal driving the score
+
+Examples:
+- "Strong GitHub and LinkedIn presence with consistent technical depth."
+- "Moderate profile with limited community impact and inconsistent signals."
+
+────────────────────────────────────────
+STRICT INSTRUCTIONS:
+────────────────────────────────────────
+
+- Base calculations ONLY on provided platform data
+- Do NOT assume missing data
+- Do NOT hallucinate scores
+- Ensure logical consistency between score, label, and explanation
+-----------------------------------------------------------------------
   "reliability_assessment": {
       "overall_reliability" : "Low|Medium|High|Very High",
       "tenure_consistency"  : str,
@@ -2145,11 +2274,75 @@ def simulated_ml_model(platform_links:dict[str, str]):
       "negotiation_advice"         : str,
       "market_benchmark"           : str
   }
-  "Recruiter_interview_probe_suggestions": list of objects:
+  "Personalized_probe_suggestions_realted to uploaded data": list of objects:
       { "category": str, "question": str, "Answer": str,
         "follow_up": str }
-    (provide at least 6 probes covering: technical depth, experience gaps,
-    fraud verification, behavioral, motivation, culture fit)
+    ⚠️ STRICT PERSONALIZATION RULES:
+
+- Every question MUST be directly derived from the candidate’s actual profile data.
+- DO NOT generate generic or template-based questions.
+- Each question must reference at least ONE of the following:
+  • a specific project (GitHub repo, tech stack, commits, stars)
+  • a platform signal (LeetCode stats, HackerRank badges, StackOverflow reputation)
+  • a timeline detail (internships, roles, gaps, overlaps)
+  • a claimed skill vs lack of evidence
+  • a contradiction or anomaly (if any)
+  • a measurable weakness (low activity, missing contributions)
+
+- Questions must feel like:
+  → "I saw THIS in your profile, explain it"
+  NOT:
+  → "Tell me about your strengths" ❌
+
+────────────────────────────────────────
+QUESTION QUALITY REQUIREMENTS:
+────────────────────────────────────────
+- Be specific, contextual, and investigative
+- Avoid generic HR questions
+- Make each question verifiable from the data
+- Include at least:
+  • 2 technical deep-dive questions (based on actual projects/code)
+  • 1 experience validation question (timeline consistency)
+  • 1 fraud/anomaly probing question (if any inconsistency exists)
+  • 1 behavioral question tied to real activity
+  • 1 motivation/career alignment question based on profile
+
+────────────────────────────────────────
+ANSWER REQUIREMENTS:
+────────────────────────────────────────
+- "Answer" must describe what a STRONG candidate response should include
+- It must reference:
+  • technical depth
+  • reasoning clarity
+  • authenticity signals
+- Avoid vague answers like "candidate should explain well"
+- Instead:
+  → "Candidate should explain architecture decisions, trade-offs, and why X approach was chosen"
+
+────────────────────────────────────────
+FOLLOW-UP REQUIREMENTS:
+────────────────────────────────────────
+- Follow-up must deepen verification
+- Should expose bluffing if candidate is weak
+- Example:
+  → "Can you walk through a specific bug you fixed in that project?"
+
+────────────────────────────────────────
+ANTI-GENERIC CONSTRAINT:
+────────────────────────────────────────
+If a question can be asked to ANY candidate, DO NOT include it.
+
+────────────────────────────────────────
+OUTPUT EXPECTATION:
+────────────────────────────────────────
+Provide at least 6 highly personalized probes.
+Each must clearly map to candidate-specific evidence.
+
+The goal is:
+→ validate authenticity
+→ test real depth
+→ expose inconsistencies
+→ assess practical capability
 
   Be analytical, fair, and base everything strictly on the data provided.
   Flag any inconsistency (e.g. short tenure listed as long, no repo activity,
@@ -2223,19 +2416,26 @@ def simulated_ml_model(platform_links:dict[str, str]):
   # ╔══════════════════════════════════════════════════════════════════════════════╗
   # ║  CELL 21 — ASSEMBLE & SAVE candidate_analysis.json                         ║
   # ╚══════════════════════════════════════════════════════════════════════════════╝
+  probes = (
+    analysis.get("recruiter_report", {}).get("personalized_probe_suggestions")
+    or analysis.get("recruiter_report", {}).get("Recruiter_interview_probe_suggestions")
+    or analysis.get("recruiter_report", {}).get("Personalized_probe_suggestions_realted to uploaded data")
+    or []
+)  
   def format_interview_qa(probes):
-    if not probes:
-        return []
+    if not probes or not isinstance(probes, list):
+        return ""
 
     formatted = []
     for i, p in enumerate(probes, 1):
         q = p.get("question", "")
         a = p.get("Answer", "")
-        
-        formatted.append(f"Q{i}. {q} Ans{i}: {a}")
 
-    return formatted
+        if q and a:
+            formatted.append(f"Q{i}. {q} Ans{i}: {a}")  
 
+    return " ".join(formatted)
+  
   def list_to_paragraph(items):
     if not items:
         return ""
@@ -2272,10 +2472,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
         .get("red_flags", ["No major risks identified"])
     ),
       
-    "interview_question": format_interview_qa(
-    analysis.get("recruiter_report", {})
-    .get("Recruiter_interview_probe_suggestions", [])
-    ),
+    "interview_questions": format_interview_qa(probes),
 
     "improvements": list_to_paragraph(
         analysis.get("candidate_report", {})
