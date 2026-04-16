@@ -6,6 +6,10 @@
 import builtins
 import sys
 import traceback
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env.local variables
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -29,9 +33,9 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 
 
-# 🔥 Supabase credentials
-SUPABASE_URL = "https://uankwdgpnouwmtgcainy.supabase.co"
-SUPABASE_KEY = "sb_publishable_8a7DY7P5uPa8zZmQF9OKSQ_JLLM_aJt"
+# 🔥 Supabase credentials (from .env.local)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://uankwdgpnouwmtgcainy.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_publishable_8a7DY7P5uPa8zZmQF9OKSQ_JLLM_aJt")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -980,16 +984,16 @@ def simulated_ml_model(platform_links:dict[str, str]):
   MANUAL_STACKOVERFLOW = platform_links.get("stackoverflow", "")
 
   # ── API CREDENTIALS ───────────────────────────────────────────────────────────
-  # Option A: set directly here
-  AZURE_OPENAI_ENDPOINT   = "https://linked.openai.azure.com/openai/v1/"
-  AZURE_OPENAI_DEPLOYMENT = "gpt-5.4-mini"
-  AZURE_OPENAI_API_KEY    = "CWcXBMalpGqTsxcKFF3movpCCR0xGwpQtMFEfIZEDTEd6oTsFtdlJQQJ99CDACYeBjFXJ3w3AAABACOGYHIY"   # paste your Azure OpenAI key
+  # All loaded from .env.local via global load_dotenv() at top
+  AZURE_OPENAI_ENDPOINT   = os.getenv("AZURE_OPENAI_ENDPOINT")
+  AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+  AZURE_OPENAI_API_KEY    = os.getenv("AZURE_OPENAI_API_KEY")
 
-  GITHUB_TOKEN       = ""   # optional — raises rate limit
-  DATAMAGNET_TOKEN   = "c7b3715393f6194188d19f9d81eb46fa44cf1728fc425d9bf8654bcb35665b5b"   # required for LinkedIn
-  KAGGLE_USERNAME    = ""   # required for Kaggle
-  KAGGLE_KEY         = ""   # required for Kaggle
-  SO_API_KEY         = ""   # optional — raises quota
+  GITHUB_TOKEN       = os.getenv("GITHUB_TOKEN", "")
+  DATAMAGNET_TOKEN   = os.getenv("DATAMAGNET_TOKEN")
+  KAGGLE_USERNAME    = os.getenv("KAGGLE_USERNAME", "")
+  KAGGLE_KEY         = os.getenv("KAGGLE_KEY", "")
+  SO_API_KEY         = os.getenv("SO_API_KEY", "")
 
   # Option B: read from environment variables (safer for shared notebooks)
   import os
