@@ -9,4 +9,4 @@ python-dotenv==1.1.1
 requests==2.32.3
 supabase==2.28.3
 uvicorn==0.44.0
-apify-client==0.1.0
+apify-client==2.5.0
