@@ -1,8 +1,3 @@
-
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  CELL 1 — INSTALL DEPENDENCIES                                              ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
-
 import builtins
 import sys
 import traceback
@@ -986,7 +981,8 @@ def simulated_ml_model(platform_links:dict[str, str]):
   AZURE_OPENAI_API_KEY    = "CWcXBMalpGqTsxcKFF3movpCCR0xGwpQtMFEfIZEDTEd6oTsFtdlJQQJ99CDACYeBjFXJ3w3AAABACOGYHIY"   # paste your Azure OpenAI key
 
   GITHUB_TOKEN       = ""   # optional — raises rate limit
-  DATAMAGNET_TOKEN   = "c7b3715393f6194188d19f9d81eb46fa44cf1728fc425d9bf8654bcb35665b5b"   # required for LinkedIn
+  DATAMAGNET_TOKEN   = "c7b3715393f6194188d19f9d81eb46fa44cf1728fc425d9bf8654bcb35665b5b" 
+  APIFY_TOKEN        = "apify_api_QSUnRa0gpXauH6nV93s3UcFNo9Ce1e2IeDKM"  # required for LinkedIn
   KAGGLE_USERNAME    = ""   # required for Kaggle
   KAGGLE_KEY         = ""   # required for Kaggle
   SO_API_KEY         = ""   # optional — raises quota
@@ -999,6 +995,7 @@ def simulated_ml_model(platform_links:dict[str, str]):
   if not KAGGLE_USERNAME:        KAGGLE_USERNAME        = os.getenv("KAGGLE_USERNAME", "")
   if not KAGGLE_KEY:             KAGGLE_KEY             = os.getenv("KAGGLE_KEY", "")
   if not SO_API_KEY:             SO_API_KEY             = os.getenv("SO_API_KEY", "")
+  if not APIFY_TOKEN:            APIFY_TOKEN             = os.getenv("APIFY_TOKEN", "")
 
   print("✅ Input parameters set")
   print(f"   Resume PDF       : {RESUME_PDF_PATH}")
@@ -1277,40 +1274,162 @@ def simulated_ml_model(platform_links:dict[str, str]):
       print("— HackerRank: no URL found, skipping")
 
   # ╔══════════════════════════════════════════════════════════════════════════════╗
-  # ║  CELL 8 — LINKEDIN SCRAPER (DataMagnet API)                                ║
+  # ║  CELL 8 — LINKEDIN SCRAPER (apify║
   # ╚══════════════════════════════════════════════════════════════════════════════╝
+  def scrape_linkedin_apify(profile_url: str, apify_token: str) -> dict:
+    from apify_client import ApifyClient
+    client = ApifyClient(apify_token)
+
+    print(f"🔄 Calling Apify actor for: {profile_url}")
+    run = client.actor("EacyHlzi4GOX8oMge").call(run_input={
+        "urls": [profile_url],
+        "resolveEmails": False,
+    })
+
+    items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+    if not items:
+        print("  ✗ Apify returned empty dataset")
+        return {}
+
+    print(f"  ✅ Apify run SUCCEEDED — fetched 1 profile")
+    return items[0]
+
+  def normalize_apify_to_datamagnet(raw: dict) -> dict:
+      
+      if not raw:
+          return {}
+
+      # experiences: HarvestAPI uses 'experiences' array
+      experiences = []
+      for exp in (raw.get("experiences") or []):
+          start = exp.get("startedOn") or {}
+          end   = exp.get("endedOn") or {}
+          experiences.append({
+              "job_title":               exp.get("title"),
+              "company_name":            exp.get("companyName"),
+              "employment_type":         exp.get("employmentType"),
+              "job_started_on":          start,  # {month, year} dict — parse_linkedin_date handles this
+              "job_ended_on":            end,
+              "job_still_working":       exp.get("isCurrent", False),
+              "company_industry":        exp.get("companyIndustry"),
+              "company_headcount_range": exp.get("companyStaffCountRange"),
+              "company_id":              exp.get("companyId"),
+              "company_url":             exp.get("companyLinkedinUrl"),
+              "company_website":         exp.get("companyWebsite"),
+              "job_location":            exp.get("location"),
+              "job_description":         exp.get("description"),
+          })
+
+      # education
+      educations = []
+      for edu in (raw.get("educations") or []):
+          start = edu.get("startedOn") or {}
+          end   = edu.get("endedOn") or {}
+          educations.append({
+              "university_name":  edu.get("schoolName"),
+              "fields_of_study":  edu.get("fieldOfStudy") or edu.get("degreeName"),
+              "started_on":       start,
+              "ended_on":         end,
+              "grade":            edu.get("grade"),
+              "description":      edu.get("description"),
+              "social_url":       edu.get("schoolUrl"),
+              "university_id":    edu.get("schoolId"),
+              "logo":             edu.get("schoolLogo"),
+          })
+
+      # skills: HarvestAPI returns list of {name, endorsementCount}
+      skills = []
+      for sk in (raw.get("skills") or []):
+          if isinstance(sk, dict):
+              skills.append({
+                  "name":             sk.get("name"),
+                  "endorsement_count": sk.get("endorsementCount"),
+              })
+          elif isinstance(sk, str):
+              skills.append({"name": sk, "endorsement_count": None})
+
+      # certifications
+      certs = []
+      for c in (raw.get("certifications") or []):
+          certs.append({
+              "name":      c.get("name"),
+              "authority": c.get("issuingOrganization") or c.get("authority"),
+          })
+
+      # recommendations
+      recs = raw.get("recommendations") or []
+
+      # current company from experiences
+      current_company = None
+      for exp in experiences:
+          if exp.get("job_still_working"):
+              current_company = exp.get("company_name")
+              break
+
+      normalized = {
+          "full_name":               raw.get("fullName"),
+          "display_name":            raw.get("fullName"),
+          "profile_headline":        raw.get("headline"),
+          "description":             raw.get("about") or raw.get("summary"),
+          "location":                raw.get("location"),
+          "profile_link":            raw.get("linkedinUrl"),
+          "followers":               raw.get("followersCount"),
+          "followers_count":         raw.get("followersCount"),
+          "connections":             raw.get("connectionsCount"),
+          "connections_count":       raw.get("connectionsCount"),
+          "avatar_url":              raw.get("profilePicture"),
+          "country":                 raw.get("country"),
+          "current_company_name":    current_company,
+
+          # sub-arrays
+          "experience":              experiences,
+          "education":               educations,
+          "skills":                  skills,
+          "certification":           certs,
+          "certifications":          certs,
+          "recommendations_received": recs,
+          "recommendations":         recs,
+
+          # activity sections (same keys, pass-through)
+          "featured":                raw.get("featured") or [],
+          "publication":             raw.get("publications") or [],
+          "project":                 raw.get("projects") or [],
+          "volunteering":            raw.get("volunteeringExperiences") or [],
+      }
+
+      return normalized
+
   linkedin_profile = {}
-  linkedin_raw_data = {}   # kept for LLM stage
+  linkedin_raw_data = {}
   linkedin_experience_rows = []
   linkedin_education_rows = []
   linkedin_skill_rows = []
   linkedin_timeline_metrics = {}
 
-  if linkedin and DATAMAGNET_TOKEN:
+  if linkedin and APIFY_TOKEN:
       try:
-          r = requests.post(
-              "https://api.datamagnet.co/api/v1/linkedin/person",
-              headers={"Authorization": f"Bearer {DATAMAGNET_TOKEN}", "Content-Type": "application/json"},
-              json={"url": linkedin}, timeout=30
-          )
-          raw = r.json()
-          data = raw.get("message", raw) if isinstance(raw, dict) else {}
-          linkedin_raw_data = data
-          linkedin_profile, linkedin_experience_rows, linkedin_education_rows, linkedin_skill_rows, linkedin_timeline_metrics = prepare_linkedin_profile(
-              data,
-              fallback_profile_url=linkedin,
-          )
+          raw_apify = scrape_linkedin_apify(linkedin, APIFY_TOKEN)
+          linkedin_raw_data = normalize_apify_to_datamagnet(raw_apify)
+
+          (
+              linkedin_profile,
+              linkedin_experience_rows,
+              linkedin_education_rows,
+              linkedin_skill_rows,
+              linkedin_timeline_metrics,
+          ) = prepare_linkedin_profile(linkedin_raw_data, fallback_profile_url=linkedin)
 
           print(
-              f"✅ LinkedIn — {linkedin_profile.get('li_name')} | "
+              f"✅ LinkedIn (Apify) — {linkedin_profile.get('li_name')} | "
               f"{len(linkedin_experience_rows)} positions | "
               f"{len(linkedin_skill_rows)} skills | "
               f"{linkedin_profile.get('li_total_exp_months', 0)} months exp"
           )
       except Exception as e:
-          print(f"✗ LinkedIn error: {e}")
-  elif not DATAMAGNET_TOKEN:
-      print("— LinkedIn: DATAMAGNET_TOKEN not set — skipping")
+          print(f"✗ LinkedIn (Apify) error: {e}")
+          import traceback; traceback.print_exc()
+  elif not APIFY_TOKEN:
+      print("— LinkedIn: APIFY_TOKEN not set — skipping")
   else:
       print("— LinkedIn: no URL found, skipping")
 
