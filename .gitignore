@@ -1,0 +1,16 @@
+.env.local
+__pycache__/
+.pytest_cache/
+*.pyc
+candidate_analysis.json
+*_numeric.csv
+*_contextual.csv
+*_scores.csv
+github_repos.csv
+linkedin_profile_full.csv
+linkedin_experience.csv
+linkedin_education.csv
+linkedin_skills.csv
+candidate_profile.csv
+resume_contextual.csv
+overall_score_report.csv
