@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import traceback
 
 from fastapi import FastAPI, HTTPException, Request
@@ -36,6 +37,8 @@ def _log_env_configuration_status() -> None:
         print(f"[env] Optional variables not set: {', '.join(missing_optional)}")
     elif not settings.apify_token.startswith("apify_api_"):
         print("[env] APIFY token detected but format looks unusual (expected prefix `apify_api_`).")
+    apify_like_keys = sorted(key for key in os.environ.keys() if "APIFY" in key.upper())
+    print(f"[env] APIFY-like env keys present: {apify_like_keys}")
     print(f"[env] CORS origins: {settings.cors_origins}")
 
 
