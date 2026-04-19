@@ -29,6 +29,7 @@ def _log_env_configuration_status() -> None:
         print(f"[env] Missing variables: {', '.join(missing)}")
     else:
         print("[env] Required variables detected.")
+    print(f"[env] CORS origins: {settings.cors_origins}")
 
 
 _log_env_configuration_status()

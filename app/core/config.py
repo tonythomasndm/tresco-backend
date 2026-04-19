@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -29,7 +31,36 @@ def _get_list(name: str, default: list[str]) -> list[str]:
     value = os.getenv(name)
     if not value:
         return default
-    return [item.strip() for item in value.split(",") if item.strip()]
+
+    def _clean_item(item: str) -> str:
+        cleaned = item.strip()
+        if not cleaned:
+            return ""
+        cleaned = cleaned.removeprefix("[").removesuffix("]").strip()
+        if len(cleaned) >= 2 and (
+            (cleaned[0] == '"' and cleaned[-1] == '"')
+            or (cleaned[0] == "'" and cleaned[-1] == "'")
+        ):
+            cleaned = cleaned[1:-1].strip()
+        if cleaned.startswith(("http://", "https://")):
+            cleaned = cleaned.rstrip("/")
+        return cleaned
+
+    raw = value.strip()
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(raw)
+        except Exception:
+            continue
+        if isinstance(parsed, (list, tuple, set)):
+            items = [_clean_item(str(item)) for item in parsed]
+            cleaned_items = [item for item in items if item]
+            if cleaned_items:
+                return cleaned_items
+
+    items = [_clean_item(item) for item in raw.split(",")]
+    cleaned_items = [item for item in items if item]
+    return cleaned_items or default
 
 
 def _get_str(name: str, default: str = "") -> str:
