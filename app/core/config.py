@@ -9,7 +9,13 @@ from dotenv import load_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-load_dotenv()
+ENV_LOCAL_PATH = BASE_DIR / ".env.local"
+ENV_PATH = BASE_DIR / ".env"
+
+if ENV_LOCAL_PATH.exists():
+    load_dotenv(ENV_LOCAL_PATH, override=False)
+elif ENV_PATH.exists():
+    load_dotenv(ENV_PATH, override=False)
 
 
 def _get_bool(name: str, default: bool) -> bool:

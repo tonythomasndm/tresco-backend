@@ -15,6 +15,24 @@ from app.utils.helpers import build_error_payload
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 
+
+def _log_env_configuration_status() -> None:
+    required = {
+        "SUPABASE_URL": settings.supabase_url,
+        "SUPABASE_KEY": settings.supabase_key,
+        "AZURE_OPENAI_ENDPOINT": settings.azure_openai_endpoint,
+        "AZURE_OPENAI_API_KEY": settings.azure_openai_api_key,
+        "APIFY_TOKEN": settings.apify_token,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        print(f"[env] Missing variables: {', '.join(missing)}")
+    else:
+        print("[env] Required variables detected.")
+
+
+_log_env_configuration_status()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
