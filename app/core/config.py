@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(BASE_DIR / ".env.local", override=False)
+load_dotenv()
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -26,6 +26,19 @@ def _get_list(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _get_str(name: str, default: str = "") -> str:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and (
+        (cleaned[0] == '"' and cleaned[-1] == '"')
+        or (cleaned[0] == "'" and cleaned[-1] == "'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -37,7 +50,8 @@ class Settings:
     azure_openai_deployment: str
     azure_openai_api_key: str
     github_token: str
-    datamagnet_token: str
+    apify_token: str
+    apify_linkedin_actor_id: str
     stackoverflow_api_key: str
     write_pipeline_artifacts: bool
 
@@ -45,8 +59,8 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
-        app_name=os.getenv("APP_NAME", "TrustScore ML Backend"),
-        app_env=os.getenv("APP_ENV", "development"),
+        app_name=_get_str("APP_NAME", "TrustScore ML Backend"),
+        app_env=_get_str("APP_ENV", "development"),
         cors_origins=_get_list(
             "CORS_ORIGINS",
             [
@@ -55,13 +69,14 @@ def get_settings() -> Settings:
                 "https://tresco.vercel.app",
             ],
         ),
-        supabase_url=os.getenv("SUPABASE_URL", ""),
-        supabase_key=os.getenv("SUPABASE_KEY", ""),
-        azure_openai_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
-        azure_openai_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini"),
-        azure_openai_api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
-        github_token=os.getenv("GITHUB_TOKEN", ""),
-        datamagnet_token=os.getenv("DATAMAGNET_TOKEN", ""),
-        stackoverflow_api_key=os.getenv("SO_API_KEY", ""),
+        supabase_url=_get_str("SUPABASE_URL", ""),
+        supabase_key=_get_str("SUPABASE_KEY", ""),
+        azure_openai_endpoint=_get_str("AZURE_OPENAI_ENDPOINT", ""),
+        azure_openai_deployment=_get_str("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini"),
+        azure_openai_api_key=_get_str("AZURE_OPENAI_API_KEY", ""),
+        github_token=_get_str("GITHUB_TOKEN", ""),
+        apify_token=_get_str("APIFY_TOKEN", ""),
+        apify_linkedin_actor_id=_get_str("APIFY_LINKEDIN_ACTOR_ID", "EacyHlzi4GOX8oMge"),
+        stackoverflow_api_key=_get_str("SO_API_KEY", ""),
         write_pipeline_artifacts=_get_bool("WRITE_PIPELINE_ARTIFACTS", True),
     )

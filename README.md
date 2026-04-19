@@ -192,6 +192,26 @@ pip install -r requirements.txt
 
 The previous `requirements.txt` was a full environment export that included older TensorFlow/JAX pins incompatible with Python 3.12. The current dependency list is trimmed to the packages actually used by `main.py`.
 
+## Railway Environment Variables
+
+Set these in Railway using key/value entries:
+
+- `APIFY_TOKEN`
+- `APIFY_LINKEDIN_ACTOR_ID` (optional, defaults to `EacyHlzi4GOX8oMge`)
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_DEPLOYMENT`
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
+- `GITHUB_TOKEN` (optional)
+- `SO_API_KEY` (optional)
+
+Important:
+
+- Use exact key names (case-sensitive).
+- Do not include spaces in key names.
+- If you set/update env vars in Railway, redeploy or restart the service so the process reloads config.
+
 ---
 
 ## 👨‍💻 Author

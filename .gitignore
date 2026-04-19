@@ -14,3 +14,31 @@ linkedin_skills.csv
 candidate_profile.csv
 resume_contextual.csv
 overall_score_report.csv
+
+# Byte-compiled / cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Common patterns
+*env/
+*env*/

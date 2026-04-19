@@ -4,8 +4,6 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
-
 from app.core.config import get_settings
 from app.models.platform_models import (
     LinkedInEducationModel,
@@ -474,32 +472,171 @@ def prepare_linkedin_profile(
     return linkedin_profile, experience_rows, education_rows, skill_rows, timeline_metrics
 
 
+def scrape_linkedin_apify(
+    profile_url: str,
+    apify_token: str,
+    actor_id: str,
+) -> dict[str, Any]:
+    if not profile_url or not apify_token:
+        return {}
+
+    try:
+        from apify_client import ApifyClient
+    except Exception:
+        return {}
+
+    try:
+        client = ApifyClient(apify_token)
+        run = client.actor(actor_id).call(
+            run_input={
+                "urls": [profile_url],
+                "resolveEmails": False,
+            }
+        )
+        dataset_id = run.get("defaultDatasetId")
+        if not dataset_id:
+            return {}
+        for item in client.dataset(dataset_id).iterate_items():
+            if isinstance(item, dict):
+                return item
+    except Exception:
+        return {}
+
+    return {}
+
+
+def normalize_apify_to_datamagnet(raw: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(raw, dict) or not raw:
+        return {}
+
+    experiences: list[dict[str, Any]] = []
+    for exp in (raw.get("experiences") or []):
+        if not isinstance(exp, dict):
+            continue
+        start = exp.get("startedOn") or exp.get("startDate") or {}
+        end = exp.get("endedOn") or exp.get("endDate") or {}
+        experiences.append(
+            {
+                "job_title": exp.get("title"),
+                "company_name": exp.get("companyName"),
+                "employment_type": exp.get("employmentType"),
+                "job_started_on": start,
+                "job_ended_on": end,
+                "job_still_working": exp.get("isCurrent", False),
+                "company_industry": exp.get("companyIndustry"),
+                "company_headcount_range": exp.get("companyStaffCountRange"),
+                "company_id": exp.get("companyId"),
+                "company_url": exp.get("companyLinkedinUrl"),
+                "company_website": exp.get("companyWebsite"),
+                "job_location": exp.get("location"),
+                "job_description": exp.get("description"),
+            }
+        )
+
+    educations: list[dict[str, Any]] = []
+    for edu in (raw.get("educations") or raw.get("education") or []):
+        if not isinstance(edu, dict):
+            continue
+        start = edu.get("startedOn") or edu.get("startDate") or {}
+        end = edu.get("endedOn") or edu.get("endDate") or {}
+        field = edu.get("fieldOfStudy") or edu.get("degreeName")
+        fields = [field] if isinstance(field, str) and field.strip() else field
+        educations.append(
+            {
+                "university_name": edu.get("schoolName"),
+                "fields_of_study": fields or [],
+                "started_on": start,
+                "ended_on": end,
+                "grade": edu.get("grade"),
+                "description": edu.get("description"),
+                "social_url": edu.get("schoolUrl"),
+                "university_id": edu.get("schoolId"),
+                "logo": edu.get("schoolLogo"),
+            }
+        )
+
+    skills: list[dict[str, Any]] = []
+    for raw_skill in (raw.get("skills") or []):
+        if isinstance(raw_skill, dict):
+            name = raw_skill.get("name") or raw_skill.get("skill")
+            if not name:
+                continue
+            skills.append(
+                {
+                    "name": name,
+                    "endorsement_count": raw_skill.get("endorsementCount") or raw_skill.get("endorsements"),
+                }
+            )
+        elif isinstance(raw_skill, str) and raw_skill.strip():
+            skills.append({"name": raw_skill.strip(), "endorsement_count": None})
+
+    certifications: list[dict[str, Any]] = []
+    for cert in (raw.get("certifications") or []):
+        if not isinstance(cert, dict):
+            continue
+        certifications.append(
+            {
+                "name": cert.get("name"),
+                "authority": cert.get("issuingOrganization") or cert.get("authority"),
+            }
+        )
+
+    recommendations = raw.get("recommendations") or raw.get("recommendationsReceived") or []
+    current_company = next(
+        (
+            exp.get("company_name")
+            for exp in experiences
+            if exp.get("job_still_working") and exp.get("company_name")
+        ),
+        None,
+    )
+    full_name = raw.get("fullName")
+    if not full_name:
+        full_name = " ".join(part for part in [raw.get("firstName"), raw.get("lastName")] if part) or None
+
+    return {
+        "full_name": full_name,
+        "display_name": full_name,
+        "profile_headline": raw.get("headline"),
+        "description": raw.get("about") or raw.get("summary"),
+        "location": raw.get("location"),
+        "profile_link": raw.get("linkedinUrl") or raw.get("profileUrl"),
+        "followers": raw.get("followersCount") or raw.get("followers"),
+        "followers_count": raw.get("followersCount") or raw.get("followers"),
+        "connections": raw.get("connectionsCount") or raw.get("connections"),
+        "connections_count": raw.get("connectionsCount") or raw.get("connections"),
+        "avatar_url": raw.get("profilePicture") or raw.get("profilePic"),
+        "country": raw.get("country"),
+        "current_company_name": current_company,
+        "experience": experiences,
+        "education": educations,
+        "skills": skills,
+        "certification": certifications,
+        "certifications": certifications,
+        "recommendations_received": recommendations,
+        "recommendations": recommendations,
+        "featured": raw.get("featured") or [],
+        "publication": raw.get("publications") or [],
+        "project": raw.get("projects") or [],
+        "volunteering": raw.get("volunteeringExperiences") or raw.get("volunteering") or [],
+    }
+
+
 class LinkedInService:
     def __init__(self) -> None:
         self.settings = get_settings()
 
     def fetch_profile(self, profile_url: str) -> LinkedInModel | None:
-        if not profile_url or not self.settings.datamagnet_token:
+        if not profile_url or not self.settings.apify_token:
             return None
 
-        try:
-            response = requests.post(
-                "https://api.datamagnet.co/api/v1/linkedin/person",
-                headers={
-                    "Authorization": f"Bearer {self.settings.datamagnet_token}",
-                    "Content-Type": "application/json",
-                },
-                json={"url": profile_url},
-                timeout=30,
-            )
-            if not response.ok:
-                return None
-            raw = response.json()
-        except Exception:
-            return None
-
-        data = raw.get("message", raw) if isinstance(raw, dict) else {}
-        if not isinstance(data, dict):
+        raw_apify = scrape_linkedin_apify(
+            profile_url=profile_url,
+            apify_token=self.settings.apify_token,
+            actor_id=self.settings.apify_linkedin_actor_id,
+        )
+        data = normalize_apify_to_datamagnet(raw_apify)
+        if not isinstance(data, dict) or not data:
             return None
 
         normalized_profile, experience_rows, education_rows, skill_rows, timeline_metrics = prepare_linkedin_profile(
