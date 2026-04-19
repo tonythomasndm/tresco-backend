@@ -76,6 +76,35 @@ def _get_str(name: str, default: str = "") -> str:
     return cleaned
 
 
+def _get_first_str(names: list[str], default: str = "") -> str:
+    for name in names:
+        value = _get_str(name, "")
+        if value:
+            return value
+
+    # Fallback: tolerate env keys with different case or accidental spaces.
+    normalized_env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        normalized_key = key.strip().upper()
+        if normalized_key and normalized_key not in normalized_env:
+            normalized_env[normalized_key] = value
+
+    for name in names:
+        raw_value = normalized_env.get(name.strip().upper())
+        if raw_value is None:
+            continue
+        cleaned = str(raw_value).strip()
+        if len(cleaned) >= 2 and (
+            (cleaned[0] == '"' and cleaned[-1] == '"')
+            or (cleaned[0] == "'" and cleaned[-1] == "'")
+        ):
+            cleaned = cleaned[1:-1].strip()
+        if cleaned:
+            return cleaned
+
+    return default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -106,13 +135,19 @@ def get_settings() -> Settings:
                 "https://tresco.vercel.app",
             ],
         ),
-        supabase_url=_get_str("SUPABASE_URL", ""),
-        supabase_key=_get_str("SUPABASE_KEY", ""),
-        azure_openai_endpoint=_get_str("AZURE_OPENAI_ENDPOINT", ""),
+        supabase_url=_get_first_str(["SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"], ""),
+        supabase_key=_get_first_str(
+            ["SUPABASE_KEY", "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"],
+            "",
+        ),
+        azure_openai_endpoint=_get_first_str(["AZURE_OPENAI_ENDPOINT", "OPENAI_BASE_URL"], ""),
         azure_openai_deployment=_get_str("AZURE_OPENAI_DEPLOYMENT", "gpt-5.4-mini"),
-        azure_openai_api_key=_get_str("AZURE_OPENAI_API_KEY", ""),
+        azure_openai_api_key=_get_first_str(["AZURE_OPENAI_API_KEY", "OPENAI_API_KEY"], ""),
         github_token=_get_str("GITHUB_TOKEN", ""),
-        apify_token=_get_str("APIFY_TOKEN", ""),
+        apify_token=_get_first_str(
+            ["APIFY_TOKEN", "APIFY_API_TOKEN", "APIFY_API_KEY", "APIFY_CLIENT_TOKEN"],
+            "",
+        ),
         apify_linkedin_actor_id=_get_str("APIFY_LINKEDIN_ACTOR_ID", "EacyHlzi4GOX8oMge"),
         stackoverflow_api_key=_get_str("SO_API_KEY", ""),
         write_pipeline_artifacts=_get_bool("WRITE_PIPELINE_ARTIFACTS", True),

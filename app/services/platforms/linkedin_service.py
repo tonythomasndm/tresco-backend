@@ -627,7 +627,13 @@ class LinkedInService:
         self.settings = get_settings()
 
     def fetch_profile(self, profile_url: str) -> LinkedInModel | None:
-        if not profile_url or not self.settings.apify_token:
+        if not profile_url:
+            return None
+        if not self.settings.apify_token:
+            print(
+                "[linkedin] APIFY token missing. Checked: APIFY_TOKEN, APIFY_API_TOKEN, "
+                "APIFY_API_KEY, APIFY_CLIENT_TOKEN."
+            )
             return None
 
         raw_apify = scrape_linkedin_apify(

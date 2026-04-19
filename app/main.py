@@ -22,13 +22,20 @@ def _log_env_configuration_status() -> None:
         "SUPABASE_KEY": settings.supabase_key,
         "AZURE_OPENAI_ENDPOINT": settings.azure_openai_endpoint,
         "AZURE_OPENAI_API_KEY": settings.azure_openai_api_key,
+    }
+    optional = {
         "APIFY_TOKEN": settings.apify_token,
     }
     missing = [name for name, value in required.items() if not value]
+    missing_optional = [name for name, value in optional.items() if not value]
     if missing:
         print(f"[env] Missing variables: {', '.join(missing)}")
     else:
         print("[env] Required variables detected.")
+    if missing_optional:
+        print(f"[env] Optional variables not set: {', '.join(missing_optional)}")
+    elif not settings.apify_token.startswith("apify_api_"):
+        print("[env] APIFY token detected but format looks unusual (expected prefix `apify_api_`).")
     print(f"[env] CORS origins: {settings.cors_origins}")
 
 
